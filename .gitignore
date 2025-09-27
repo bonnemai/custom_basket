@@ -1,0 +1,4 @@
+**/*.pyc
+app/__pycache__/
+app/__pycache__/main.cpython-313.pyc
+custom_basket_pricer.egg-info/
