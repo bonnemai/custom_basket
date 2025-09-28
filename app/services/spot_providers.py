@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from decimal import Decimal
+import random
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, Iterable, Mapping
 
 import httpx
 
-from .market_data import MarketDataProvider, MarketQuote
+from .market_data import DEFAULT_QUOTES, MarketQuote
 
 
 logger = logging.getLogger(__name__)
@@ -20,13 +20,17 @@ class SpotProvider:
 
     def __init__(
         self,
-        market_data_provider: MarketDataProvider,
         api_token: str | None = None,
         session: httpx.AsyncClient | None = None,
+        fallback_quotes: Mapping[str, MarketQuote] | None = None,
     ) -> None:
-        self._market_data_provider = market_data_provider
         self._api_token = api_token
         self._client = session
+        # Normalise fallback quotes to uppercase keys for quick lookup.
+        base_quotes = fallback_quotes or DEFAULT_QUOTES
+        self._fallback_quotes: Dict[str, MarketQuote] = {
+            symbol.upper(): quote for symbol, quote in base_quotes.items()
+        }
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -114,10 +118,8 @@ class SpotProvider:
 
         missing = normalized - set(quotes.keys())
         if missing:
-            snapshot = self._market_data_provider.snapshot()
-            for ticker in missing:
-                if ticker in snapshot:
-                    quotes[ticker] = snapshot[ticker]
+            logger.info("Missing quotes for tickers: %s, synthesising fallback prices", missing)
+            quotes.update(self._build_fallback_quotes(missing))
 
         return quotes
 
@@ -125,3 +127,18 @@ class SpotProvider:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+
+    def _build_fallback_quotes(self, tickers: Iterable[str]) -> Dict[str, MarketQuote]:
+        fallback: Dict[str, MarketQuote] = {}
+        for ticker in tickers:
+            fallback_quote = self._fallback_quotes.get(ticker)
+            if fallback_quote is None:
+                fallback_quote = MarketQuote(price=Decimal("100"), currency="USD")
+            randomized = self._randomize_quote(fallback_quote)
+            fallback[ticker] = randomized
+        return fallback
+
+    def _randomize_quote(self, base_quote: MarketQuote) -> MarketQuote:
+        factor = Decimal("0.5") + Decimal("0.1") * Decimal(str(random.random()))
+        randomized_price = (base_quote.price * factor).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        return MarketQuote(price=randomized_price, currency=base_quote.currency)

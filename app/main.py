@@ -48,7 +48,7 @@ def create_app() -> FastAPI:
     pricing_service = PricingService(market_data_provider, fx_provider)
     basket_cache = BasketCache()
     eodhd_token = os.getenv("EODHD_API_TOKEN")
-    spot_provider = SpotProvider(market_data_provider, api_token=eodhd_token)
+    spot_provider = SpotProvider(api_token=eodhd_token)
 
     try:
         stream_interval = float(os.getenv("BASKET_STREAM_INTERVAL", "1"))
