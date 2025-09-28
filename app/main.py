@@ -6,12 +6,13 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Iterable
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import HTMLResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sse_starlette.sse import EventSourceResponse
 
@@ -141,6 +142,12 @@ def create_app() -> FastAPI:
             "price": float(quote.price),
             "currency": quote.currency,
         }
+
+    index_html = (Path(__file__).resolve().parent / "templates" / "index.html").read_text(encoding="utf-8")
+
+    @app.get("/", response_class=HTMLResponse)
+    def get_index() -> HTMLResponse:
+        return HTMLResponse(index_html)
 
     @app.get("/metrics")
     def get_metrics() -> Response:

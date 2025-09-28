@@ -30,6 +30,14 @@ def _create_sample_basket(basket_name: str = "Tech") -> dict:
     return response.json()
 
 
+def test_index_page() -> None:
+    response = client.get("/")
+    assert response.status_code == 200
+    body = response.text
+    assert "Delta-One Custom Basket Pricing API" in body
+    assert "/docs" in body
+
+
 def test_create_and_list_baskets() -> None:
     basket = _create_sample_basket()
 

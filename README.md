@@ -1,5 +1,7 @@
 # Delta-One Custom Basket Pricing Service
 
+https://github.com/bonnemai/custom_basket
+
 Change of specs: Delta One Custom Basket Pricer: 
 - one POST Restul Endpoint to create a new Custom Basket: keep it in the cache
 - one PUT/ PATCH to update the Basket
@@ -103,3 +105,13 @@ curl http://localhost:8000/baskets/stream
 ## Notes
 - The bundled market and FX data is illustrative only. Supply overrides in the request payload to price instruments outside the sample universe.
 - Normalized weights are based on gross exposure; a warning is returned if the provided weights do not sum to one.
+
+## Deployment
+I chose IBM Cloud because BNP Paribas is supposed to use it (source: ChatGPT): 
+```
+# Pause the app (no auto-start on requests)
+ibmcloud ce app pause --name custom-basket-api
+
+# Later, if you want to resume:
+ibmcloud ce app resume --name custom-basket-api
+```
