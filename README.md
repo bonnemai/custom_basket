@@ -1,12 +1,19 @@
 # Delta-One Custom Basket Pricing Service
 
+Change of specs: Delta One Custom Basket Pricer: 
+- one POST Restul Endpoint to create a new Custom Basket: keep it in the cache
+- one PUT/ PATCH to update the Basket
+- GET to get all baskets
+- Create Server Sent Event to publish the prices of all baskets using the spots from eodhd.com
+
 A FastAPI backend for valuing bespoke delta-one baskets. It ingests a basket definition with constituent weights, applies market data and FX conversions, and returns indicative pricing alongside position-level analytics.
 
 ## Features
+- Persistent in-memory cache for created baskets with RESTful create, update, and list endpoints.
 - Spot pricing for custom baskets with optional target notional allocation.
-- Inline market data and FX overrides to supplement the built-in indicative dataset.
+- Automatically sources indicative prices and FX rates from the built-in dataset with optional EODHD intraday refresh.
 - Position level breakdown showing normalized weights, contributions, and share quantities.
-- REST endpoints suitable for integration with trading or portfolio construction tools.
+- Server-Sent Events feed that streams basket prices using EODHD real-time data when available (falls back to static quotes otherwise).
 - Prometheus-compatible `/metrics` endpoint with request counters and latency histograms.
 
 ## Project Layout
@@ -43,9 +50,17 @@ tests/
    uvicorn app.main:app --reload --port 8000
    ```
 
-### Sample Request
+## API Highlights
+- `POST /baskets` – create and price a basket, persisting it in the cache (response includes `basket_id`).
+- `PUT/PATCH /baskets/{basket_id}` – replace an existing basket definition and recalculate pricing.
+- `GET /baskets` – retrieve the current cached state of all baskets.
+- `GET /baskets/stream` – Server-Sent Events endpoint that broadcasts periodic price snapshots for all baskets.
+- `POST /pricing/basket` – legacy pricing endpoint that prices a request without persisting it.
+
+### Sample Requests
+Create and persist a basket:
 ```bash
-curl -X POST http://localhost:8000/pricing/basket \
+curl -X POST http://localhost:8000/baskets \
      -H "Content-Type: application/json" \
      -d '{
            "basket_name": "Tech",
@@ -54,9 +69,13 @@ curl -X POST http://localhost:8000/pricing/basket \
              {"ticker": "AAPL", "weight": "0.5"},
              {"ticker": "MSFT", "weight": "0.3"},
              {"ticker": "GOOGL", "weight": "0.2"}
-           ],
-           "notional": "1000000"
+           ]
          }'
+```
+
+Stream live prices (requires `EODHD_API_TOKEN`; falls back to static quotes otherwise):
+```bash
+curl http://localhost:8000/baskets/stream
 ```
 
 ## Running Tests

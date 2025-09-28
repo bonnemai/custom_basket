@@ -5,16 +5,11 @@ from __future__ import annotations
 import time
 
 from decimal import Decimal, ROUND_HALF_UP, getcontext
-from typing import Dict, Iterable, Mapping, Tuple
+from typing import Dict, Mapping, Tuple
 
 from prometheus_client import Counter, Histogram
 
-from ..models import (
-    BasketPositionBreakdown,
-    BasketRequest,
-    BasketPricingResponse,
-    FxRate,
-)
+from ..models import BasketPositionBreakdown, BasketRequest, BasketPricingResponse
 from .market_data import MarketDataProvider, MarketQuote
 
 # Higher precision during intermediate calculations
@@ -52,15 +47,6 @@ class FxRateProvider:
     def snapshot(self) -> Dict[Tuple[str, str], Decimal]:
         return dict(self._rates)
 
-    @staticmethod
-    def build_overrides(data_points: Iterable[FxRate] | None) -> Dict[Tuple[str, str], Decimal]:
-        if not data_points:
-            return {}
-        overrides: Dict[Tuple[str, str], Decimal] = {}
-        for item in data_points:
-            overrides[(item.base_currency, item.quote_currency)] = item.rate
-        return overrides
-
     def get_rate(
         self,
         from_currency: str,
@@ -95,12 +81,23 @@ class PricingService:
         self._market_data_provider = market_data_provider
         self._fx_provider = fx_provider
 
-    def price_basket(self, request: BasketRequest) -> BasketPricingResponse:
+    def price_basket(
+        self,
+        request: BasketRequest,
+        *,
+        market_overrides: Mapping[str, MarketQuote] | None = None,
+        fx_overrides: Mapping[Tuple[str, str], Decimal] | None = None,
+    ) -> BasketPricingResponse:
         start_time = time.perf_counter()
         status = "success"
         try:
-            market_overrides = self._market_data_provider.build_overrides(request.market_data)
-            fx_overrides = self._fx_provider.build_overrides(request.fx_rates)
+            market_overrides = {
+                symbol.upper(): quote for symbol, quote in (market_overrides or {}).items()
+            }
+            raw_fx_overrides = fx_overrides or {}
+            fx_overrides = {
+                (base.upper(), quote.upper()): rate for (base, quote), rate in raw_fx_overrides.items()
+            }
 
             weight_sum = Decimal("0")
             gross_weight = Decimal("0")
@@ -193,8 +190,10 @@ class PricingService:
         overrides: Mapping[str, MarketQuote],
         position,
     ) -> MarketQuote:
-        if position.price is not None:
-            return MarketQuote(price=position.price, currency=position.currency)
+        override_price = getattr(position, "price", None)
+        if override_price is not None:
+            override_currency = getattr(position, "currency", "USD")
+            return MarketQuote(price=override_price, currency=override_currency)
         if overrides and ticker.upper() in overrides:
             return overrides[ticker.upper()]
         return self._market_data_provider.get_quote(ticker, overrides)

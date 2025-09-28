@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated, List
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic.functional_serializers import PlainSerializer
@@ -42,20 +43,11 @@ class BasketPositionRequest(BaseModel):
 
     ticker: str = Field(..., description="Instrument identifier")
     weight: DecimalNumber = Field(..., description="Relative weight of the constituent")
-    price: DecimalNumber | None = Field(
-        default=None,
-        gt=0,
-        description="Override price for the instrument in the provided currency",
-    )
     currency: str = Field(
         default="USD",
-        description="Currency of the override price (defaults to USD)",
+        description="Currency of the indicative price (defaults to USD)",
         min_length=3,
         max_length=3,
-    )
-    metadata: Optional[Dict[str, str]] = Field(
-        default=None,
-        description="Optional bag for client supplied metadata",
     )
 
     @field_validator("currency")
@@ -81,14 +73,6 @@ class BasketRequest(BaseModel):
         default=None,
         gt=0,
         description="Optional target notional for the basket in base currency",
-    )
-    market_data: Optional[List[MarketDataPoint]] = Field(
-        default=None,
-        description="Inline market data overrides",
-    )
-    fx_rates: Optional[List[FxRate]] = Field(
-        default=None,
-        description="Inline FX rates to complement the default set",
     )
 
     @field_validator("base_currency")
@@ -123,3 +107,18 @@ class BasketPricingResponse(BaseModel):
     total_notional: DecimalNumber | None = None
     positions: List[BasketPositionBreakdown]
     messages: List[str] = Field(default_factory=list)
+
+
+class BasketState(BasketPricingResponse):
+    """Serialized state for baskets stored in the cache."""
+
+    basket_id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class BasketStreamPayload(BaseModel):
+    """Payload broadcast over the server-sent events stream."""
+
+    as_of: datetime
+    baskets: List[BasketState]

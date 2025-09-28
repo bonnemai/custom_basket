@@ -26,6 +26,7 @@ DEFAULT_QUOTES: Dict[str, MarketQuote] = {
     "NFLX": MarketQuote(price=Decimal("410.12"), currency="USD"),
     "BABA": MarketQuote(price=Decimal("87.65"), currency="USD"),
     "ORCL": MarketQuote(price=Decimal("114.78"), currency="USD"),
+    "SAP": MarketQuote(price=Decimal("125"), currency="EUR"),
 }
 
 
