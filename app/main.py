@@ -143,11 +143,14 @@ def create_app() -> FastAPI:
             "currency": quote.currency,
         }
 
-    index_html = (Path(__file__).resolve().parent / "templates" / "index.html").read_text(encoding="utf-8")
+    index_template = (Path(__file__).resolve().parent / "templates" / "index.html").read_text(encoding="utf-8")
 
     @app.get("/", response_class=HTMLResponse)
     def get_index() -> HTMLResponse:
-        return HTMLResponse(index_html)
+        token = os.getenv("EODHD_API_TOKEN") or ""
+        token_prefix = token[:5] if token else "(unset)"
+        content = index_template.replace("{{TOKEN_PREFIX}}", token_prefix)
+        return HTMLResponse(content)
 
     @app.get("/metrics")
     def get_metrics() -> Response:
