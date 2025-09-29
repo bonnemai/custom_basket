@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -26,15 +27,18 @@ from .services.spot_providers import SpotProvider
 logger = logging.getLogger(__name__)
 
 
-def create_app() -> FastAPI:
-    """Application factory to allow testability."""
+@dataclass
+class AppResources:
+    market_data_provider: MarketDataProvider
+    fx_provider: FxRateProvider
+    pricing_service: PricingService
+    basket_cache: BasketCache
+    spot_provider: SpotProvider
+    stream_interval: float
+    index_template: str
 
-    app = FastAPI(
-        title="Delta-One Custom Basket Pricing API",
-        version="0.2.0",
-        description="Compute indicative prices and exposures for bespoke baskets.",
-    )
 
+def configure_cors(app: FastAPI) -> None:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -43,42 +47,89 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+
+def parse_stream_interval(raw_value: str | None) -> float:
+    if raw_value is None:
+        return 1.0
+    try:
+        parsed = float(raw_value)
+    except ValueError:  # pragma: no cover - defensive parsing
+        parsed = 5.0
+    return max(parsed, 0.1)
+
+
+def build_app_resources() -> AppResources:
     market_data_provider = MarketDataProvider()
     fx_provider = FxRateProvider()
     pricing_service = PricingService(market_data_provider, fx_provider)
     basket_cache = BasketCache()
     eodhd_token = os.getenv("EODHD_API_TOKEN")
     spot_provider = SpotProvider(api_token=eodhd_token)
+    stream_interval = parse_stream_interval(os.getenv("BASKET_STREAM_INTERVAL"))
+    index_template = (Path(__file__).resolve().parent / "templates" / "index.html").read_text(encoding="utf-8")
+    return AppResources(
+        market_data_provider=market_data_provider,
+        fx_provider=fx_provider,
+        pricing_service=pricing_service,
+        basket_cache=basket_cache,
+        spot_provider=spot_provider,
+        stream_interval=stream_interval,
+        index_template=index_template,
+    )
 
-    try:
-        stream_interval = float(os.getenv("BASKET_STREAM_INTERVAL", "1"))
-    except ValueError:  # pragma: no cover - defensive parsing
-        stream_interval = 5.0
-    stream_interval = max(stream_interval, 0.1)
 
+def add_shutdown_handler(app: FastAPI, spot_provider: SpotProvider) -> None:
     async def shutdown_event() -> None:
         await spot_provider.aclose()
 
     app.add_event_handler("shutdown", shutdown_event)
 
-    def initialize_seed_basket() -> None:
-        seed_payload = {
-            "basket_name": "Seed Basket",
-            "base_currency": "USD",
-            "positions": [
-                {"ticker": "AAPL", "weight": "0.5"},
-                {"ticker": "MSFT", "weight": "0.3"},
-                {"ticker": "GOOGL", "weight": "0.2"},
-            ],
-            "notional": "1000000",
-        }
-        try:
-            request_model = BasketRequest.model_validate(seed_payload)
-            pricing = pricing_service.price_basket(request_model)
-            basket_cache.upsert("seed-basket", request_model, pricing)
-            logger.info("Seed basket initialised in cache")
-        except Exception as exc:  # pragma: no cover - bootstrap safety
-            logger.warning("Unable to initialise seed basket: %s", exc)
+
+def initialize_seed_basket(resources: AppResources) -> None:
+    seed_payload = {
+        "basket_name": "Seed Basket",
+        "base_currency": "USD",
+        "positions": [
+            {"ticker": "AAPL", "weight": "0.5"},
+            {"ticker": "MSFT", "weight": "0.3"},
+            {"ticker": "GOOGL", "weight": "0.2"},
+        ],
+        "notional": "1000000",
+    }
+    try:
+        request_model = BasketRequest.model_validate(seed_payload)
+        pricing = resources.pricing_service.price_basket(request_model)
+        resources.basket_cache.upsert("seed-basket", request_model, pricing)
+        logger.info("Seed basket initialised in cache")
+    except Exception as exc:  # pragma: no cover - bootstrap safety
+        logger.warning("Unable to initialise seed basket: %s", exc)
+
+
+def to_state(entity: CachedBasket) -> BasketState:
+    payload = entity.pricing.model_dump()
+    return BasketState(
+        **payload,
+        basket_id=entity.basket_id,
+        created_at=entity.created_at,
+        updated_at=entity.updated_at,
+    )
+
+
+def collect_tickers(baskets: Iterable[CachedBasket]) -> set[str]:
+    symbols: set[str] = set()
+    for basket in baskets:
+        for position in basket.definition.positions:
+            symbols.add(position.ticker.upper())
+    return symbols
+
+
+def register_routes(app: FastAPI, resources: AppResources) -> None:
+    basket_cache = resources.basket_cache
+    pricing_service = resources.pricing_service
+    market_data_provider = resources.market_data_provider
+    spot_provider = resources.spot_provider
+    stream_interval = resources.stream_interval
+    index_template = resources.index_template
 
     def price_request(request: BasketRequest) -> BasketPricingResponse:
         try:
@@ -87,22 +138,6 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    def to_state(entity: CachedBasket) -> BasketState:
-        payload = entity.pricing.model_dump()
-        return BasketState(
-            **payload,
-            basket_id=entity.basket_id,
-            created_at=entity.created_at,
-            updated_at=entity.updated_at,
-        )
-
-    def collect_tickers(baskets: Iterable[CachedBasket]) -> set[str]:
-        symbols: set[str] = set()
-        for basket in baskets:
-            for position in basket.definition.positions:
-                symbols.add(position.ticker.upper())
-        return symbols
 
     @app.post("/baskets", response_model=BasketState, status_code=201)
     def create_basket(request: BasketRequest) -> BasketState:
@@ -142,8 +177,6 @@ def create_app() -> FastAPI:
             "price": float(quote.price),
             "currency": quote.currency,
         }
-
-    index_template = (Path(__file__).resolve().parent / "templates" / "index.html").read_text(encoding="utf-8")
 
     @app.get("/", response_class=HTMLResponse)
     def get_index() -> HTMLResponse:
@@ -222,7 +255,21 @@ def create_app() -> FastAPI:
             response._ping_task.cancel()  # pragma: no cover - defensive safety
         return response
 
-    initialize_seed_basket()
+
+def create_app() -> FastAPI:
+    """Application factory to allow testability."""
+
+    app = FastAPI(
+        title="Delta-One Custom Basket Pricing API",
+        version="0.2.0",
+        description="Compute indicative prices and exposures for bespoke baskets.",
+    )
+
+    configure_cors(app)
+    resources = build_app_resources()
+    add_shutdown_handler(app, resources.spot_provider)
+    register_routes(app, resources)
+    initialize_seed_basket(resources)
 
     return app
 

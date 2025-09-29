@@ -20,6 +20,10 @@ RUN pytest
 
 # Runtime image
 FROM deps AS runtime
+RUN groupadd --system app && useradd --system --create-home --gid app app \
+    && chown -R app:app /app
+USER app
+WORKDIR /app
 EXPOSE 8000
 ENTRYPOINT ["uvicorn"]
 CMD ["app.main:app", "--host", "0.0.0.0", "--port", "8000"]
