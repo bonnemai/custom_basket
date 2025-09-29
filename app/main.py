@@ -123,14 +123,7 @@ def collect_tickers(baskets: Iterable[CachedBasket]) -> set[str]:
     return symbols
 
 
-def register_routes(app: FastAPI, resources: AppResources) -> None:
-    basket_cache = resources.basket_cache
-    pricing_service = resources.pricing_service
-    market_data_provider = resources.market_data_provider
-    spot_provider = resources.spot_provider
-    stream_interval = resources.stream_interval
-    index_template = resources.index_template
-
+def make_price_request(pricing_service: PricingService):
     def price_request(request: BasketRequest) -> BasketPricingResponse:
         try:
             return pricing_service.price_basket(request)
@@ -138,6 +131,91 @@ def register_routes(app: FastAPI, resources: AppResources) -> None:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return price_request
+
+
+def heartbeat_event() -> dict:
+    payload = BasketStreamPayload(
+        as_of=datetime.now(timezone.utc),
+        baskets=[],
+    )
+    return {"event": "heartbeat", "data": payload.model_dump_json()}
+
+
+def build_overrides_map(basket: CachedBasket, quotes: dict[str, float]) -> dict[str, float]:
+    return {
+        position.ticker.upper(): quotes[position.ticker.upper()]
+        for position in basket.definition.positions
+        if position.ticker.upper() in quotes
+    }
+
+
+def refresh_baskets(
+    snapshot: Iterable[CachedBasket],
+    quotes: dict[str, float],
+    basket_cache: BasketCache,
+    pricing_service: PricingService,
+) -> list[BasketState]:
+    updates: list[BasketState] = []
+    for basket in snapshot:
+        overrides_map = build_overrides_map(basket, quotes)
+        try:
+            pricing = pricing_service.price_basket(
+                basket.definition,
+                market_overrides=overrides_map,
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to refresh basket %s: %s", basket.basket_id, exc)
+            continue
+
+        basket_cache.update_pricing(basket.basket_id, pricing)
+        refreshed = basket_cache.get(basket.basket_id)
+        if refreshed is not None:
+            updates.append(to_state(refreshed))
+    return updates
+
+
+def prices_event(updates: list[BasketState]) -> dict:
+    payload = BasketStreamPayload(
+        as_of=datetime.now(timezone.utc),
+        baskets=updates,
+    )
+    return {"event": "prices", "data": payload.model_dump_json()}
+
+
+async def stream_basket_events(
+    basket_cache: BasketCache,
+    spot_provider: SpotProvider,
+    pricing_service: PricingService,
+    stream_interval: float,
+) -> Iterable[dict]:
+    try:
+        while True:
+            snapshot = basket_cache.list()
+            tickers = collect_tickers(snapshot)
+            if not snapshot or not tickers:
+                yield heartbeat_event()
+                await asyncio.sleep(stream_interval)
+                continue
+
+            quotes = await spot_provider.get_quotes(tickers)
+            updates = refresh_baskets(snapshot, quotes, basket_cache, pricing_service)
+            yield prices_event(updates)
+            await asyncio.sleep(stream_interval)
+    except asyncio.CancelledError:  # pragma: no cover - triggered on disconnect
+        logger.debug("Basket SSE client disconnected")
+        raise
+
+
+def register_routes(app: FastAPI, resources: AppResources) -> None:
+    basket_cache = resources.basket_cache
+    pricing_service = resources.pricing_service
+    market_data_provider = resources.market_data_provider
+    spot_provider = resources.spot_provider
+    stream_interval = resources.stream_interval
+    index_template = resources.index_template
+    price_request = make_price_request(pricing_service)
 
     @app.post("/baskets", response_model=BasketState, status_code=201)
     def create_basket(request: BasketRequest) -> BasketState:
@@ -189,65 +267,15 @@ def register_routes(app: FastAPI, resources: AppResources) -> None:
     def get_metrics() -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
-    async def stream_generator():
-        try:
-            while True:
-                snapshot = basket_cache.list()
-                tickers = collect_tickers(snapshot)
-
-                if not snapshot or not tickers:
-                    payload = BasketStreamPayload(
-                        as_of=datetime.now(timezone.utc),
-                        baskets=[],
-                    )
-                    yield {
-                        "event": "heartbeat",
-                        "data": payload.model_dump_json(),
-                    }
-                    await asyncio.sleep(stream_interval)
-                    continue
-
-                quotes = await spot_provider.get_quotes(tickers)
-                updates: list[BasketState] = []
-
-                for basket in snapshot:
-                    overrides_map = {
-                        position.ticker.upper(): quotes[position.ticker.upper()]
-                        for position in basket.definition.positions
-                        if position.ticker.upper() in quotes
-                    }
-
-                    try:
-                        pricing = pricing_service.price_basket(
-                            basket.definition,
-                            market_overrides=overrides_map,
-                        )
-                    except Exception as exc:  # pragma: no cover - defensive logging
-                        logger.warning("Failed to refresh basket %s: %s", basket.basket_id, exc)
-                        continue
-
-                    basket_cache.update_pricing(basket.basket_id, pricing)
-                    refreshed = basket_cache.get(basket.basket_id)
-                    if refreshed is not None:
-                        updates.append(to_state(refreshed))
-
-                payload = BasketStreamPayload(
-                    as_of=datetime.now(timezone.utc),
-                    baskets=updates,
-                )
-                yield {
-                    "event": "prices",
-                    "data": payload.model_dump_json(),
-                }
-
-                await asyncio.sleep(stream_interval)
-        except asyncio.CancelledError:  # pragma: no cover - triggered on disconnect
-            logger.debug("Basket SSE client disconnected")
-            raise
-
     @app.get("/baskets/stream")
     async def stream_basket_prices() -> EventSourceResponse:
-        response = EventSourceResponse(stream_generator())
+        generator = stream_basket_events(
+            basket_cache=basket_cache,
+            spot_provider=spot_provider,
+            pricing_service=pricing_service,
+            stream_interval=stream_interval,
+        )
+        response = EventSourceResponse(generator)
         # Disable default ping to avoid deprecated datetime.utcnow usage in dependency.
         if hasattr(response, "ping_interval"):
             response.ping_interval = 1_000  # type: ignore[attr-defined]
