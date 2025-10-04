@@ -10,7 +10,6 @@ on:
 
 env:
   AWS_REGION: eu-west-2
-  AWS_ACCOUNT_ID: '833715352507'
   ECR_REGISTRY: 833715352507.dkr.ecr.eu-west-2.amazonaws.com
   ECR_REPOSITORY: bonnemai/custom-basket
   IMAGE_TAG: latest
@@ -36,7 +35,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ format('arn:aws:iam::%s:role/%s', env.AWS_ACCOUNT_ID, secrets.AWS_ROLE_TO_ASSUME) }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           role-session-name: GitHubActionsECR
           aws-region: ${{ env.AWS_REGION }}
 
