@@ -25,4 +25,4 @@ FROM --platform=linux/arm64 public.ecr.aws/lambda/python:${PYTHON_VERSION} AS ru
 COPY --from=builder /opt/python /opt/python
 COPY app ./app
 
-CMD ["app.main:lambda_handler"]
+CMD ["app.main.lambda_handler"]
