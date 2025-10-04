@@ -3,5 +3,6 @@
 unit-tests:
 	uv run pytest
 
-run:
-	uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+invoke-local:
+	docker build -t custom-basket . && \
+		docker run --rm -p 9000:8080 custom-basket

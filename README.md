@@ -32,25 +32,36 @@ tests/
 ```
 
 ## Getting Started
-### Using uv (recommended)
-1. Install [uv](https://docs.astral.sh/uv/) if needed.
-2. From the project root, run:
+### Dependencies
+1. Install [uv](https://docs.astral.sh/uv/) (or create a virtualenv) and install the project:
    ```bash
-   uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   uv pip install -e .[dev]
+   # or
+   python3 -m venv .venv && source .venv/bin/activate && pip install -e .[dev]
    ```
-   The first invocation resolves and caches dependencies based on `pyproject.toml`.
 
-### Using virtualenv + pip
-1. Create a virtual environment and install dependencies:
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -e .[dev]
-   ```
-2. Start the API:
-   ```bash
-   uvicorn app.main:app --reload --port 8000
-   ```
+### Local Lambda invocation
+The container now targets AWS Lambda (arm64). Build and run it locally with the Lambda Runtime API exposed:
+```bash
+docker build -t custom-basket .
+docker run --rm -p 9000:8080 custom-basket
+```
+
+Invoke the function by sending an API Gateway-style event to `http://localhost:9000/2015-03-31/functions/function/invocations`:
+```bash
+curl -X POST \
+  "http://localhost:9000/2015-03-31/functions/function/invocations" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "resource": "/baskets",
+        "path": "/baskets",
+        "httpMethod": "GET",
+        "headers": {"accept": "application/json"},
+        "requestContext": {"http": {"path": "/baskets", "method": "GET"}},
+        "isBase64Encoded": false
+      }'
+```
+Adjust `httpMethod`, `path`, and body for other endpoints. For automated checks, rely on `pytest`, which drives the FastAPI application directly.
 
 ## API Highlights
 - `POST /baskets` – create and price a basket, persisting it in the cache (response includes `basket_id`).
@@ -60,43 +71,30 @@ tests/
 - `POST /pricing/basket` – legacy pricing endpoint that prices a request without persisting it.
 
 ### Sample Requests
-Create and persist a basket:
+For example, to create a basket locally via Lambda emulation:
 ```bash
-curl -X POST http://localhost:8000/baskets \
-     -H "Content-Type: application/json" \
-     -d '{
-           "basket_name": "Tech",
-           "base_currency": "USD",
-           "positions": [
-             {"ticker": "AAPL", "weight": "0.5"},
-             {"ticker": "MSFT", "weight": "0.3"},
-             {"ticker": "GOOGL", "weight": "0.2"}
-           ]
-         }'
+curl -X POST \
+  "http://localhost:9000/2015-03-31/functions/function/invocations" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "resource": "/baskets",
+        "path": "/baskets",
+        "httpMethod": "POST",
+        "headers": {"content-type": "application/json"},
+        "requestContext": {"http": {"path": "/baskets", "method": "POST"}},
+        "body": "{\\"basket_name\\": \\"Tech\\", \\"base_currency\\": \\"USD\\", \\"positions\\": [{\\"ticker\\": \\"AAPL\\", \\"weight\\": \\"0.5\\"}, {\\"ticker\\": \\"MSFT\\", \\"weight\\": \\"0.3\\"}, {\\"ticker\\": \\"GOOGL\\", \\"weight\\": \\"0.2\\"}]}"
+      }'
 ```
-
-Stream live prices (requires `EODHD_API_TOKEN`; falls back to static quotes otherwise):
-```bash
-curl http://localhost:8000/baskets/stream
-```
+Lambda responses include the encoded body in the `body` property; decode it to inspect the JSON payload.
 
 ## Running Tests
 - With uv: `make unit-tests`
 - With an activated virtualenv: `pytest`
 
 ## Docker
-- Build the runtime image:
-  ```bash
-  docker build -t custom-basket .
-  ```
-- Run the service:
-  ```bash
-  docker run --rm -p 8000:8000 custom-basket
-  ```
-- Execute the unit-test build target:
-  ```bash
-  docker build --target unit-tests .
-  ```
+- Build the runtime image: `docker build -t custom-basket .`
+- Run unit tests in the container: `docker build --target unit-tests .`
+- Emulate Lambda locally: `docker run --rm -p 9000:8080 custom-basket`
 
 ## Observability
 - `/metrics` returns Prometheus exposition format with `basket_pricing_requests_total` and `basket_pricing_duration_seconds`.
