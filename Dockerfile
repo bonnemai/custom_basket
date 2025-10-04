@@ -1,29 +1,28 @@
 # syntax=docker/dockerfile:1.4
-FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS base
+ARG PYTHON_VERSION=3.11
+
+FROM --platform=linux/arm64 python:${PYTHON_VERSION}-slim AS builder
 WORKDIR /app
-ENV UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-# Copy project metadata first for better layer caching
 COPY pyproject.toml README.md ./
-
-# Install production dependencies together with package code
-FROM base AS deps
 COPY app ./app
-RUN uv pip install --system --no-cache .
 
-# Unit test target stage
-FROM deps AS unit-tests
+RUN pip install --upgrade pip \
+    && pip install --no-cache-dir . --target /opt/python
+
+FROM builder AS unit-tests
 COPY tests ./tests
-RUN uv pip install --system --no-cache .[dev]
+RUN pip install --no-cache-dir \
+    "pytest>=7.4.0,<9.0.0" \
+    "pytest-cov>=4.1.0,<5.0.0"
+ENV PYTHONPATH=/opt/python
 RUN pytest
 
-# Runtime image
-FROM deps AS runtime
-RUN groupadd --system app && useradd --system --create-home --gid app app \
-    && chown -R app:app /app
-USER app
-WORKDIR /app
-EXPOSE 8000
-ENTRYPOINT ["uvicorn"]
-CMD ["app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+FROM --platform=linux/arm64 public.ecr.aws/lambda/python:${PYTHON_VERSION} AS runtime
+COPY --from=builder /opt/python /opt/python
+COPY app ./app
+
+CMD ["app.main:lambda_handler"]

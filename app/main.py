@@ -14,6 +14,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
+from mangum import Mangum
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sse_starlette.sse import EventSourceResponse
 
@@ -303,3 +304,4 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+lambda_handler = Mangum(app)
