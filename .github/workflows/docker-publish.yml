@@ -65,6 +65,9 @@ jobs:
           context: .
           file: Dockerfile
           platforms: linux/arm64
-          push: true
+          compression: gzip
+          provenance: false
+          sbom: false
+          outputs: type=image,name=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }},push=true,oci-mediatypes=false
           tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
           labels: ${{ steps.meta.outputs.labels }}
