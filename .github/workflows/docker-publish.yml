@@ -65,7 +65,6 @@ jobs:
           context: .
           file: Dockerfile
           platforms: linux/arm64
-          compression: gzip
           provenance: false
           sbom: false
           outputs: type=image,name=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }},push=true,oci-mediatypes=false
