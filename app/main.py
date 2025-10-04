@@ -13,10 +13,9 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from mangum import Mangum
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from sse_starlette.sse import EventSourceResponse
 
 from .models import BasketPricingResponse, BasketRequest, BasketState, BasketStreamPayload
 from .services.basket_cache import BasketCache, CachedBasket
@@ -39,10 +38,11 @@ class AppResources:
     index_template: str
 
 
+allow_origins = [o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()]
 def configure_cors(app: FastAPI) -> None:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allow_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -269,20 +269,25 @@ def register_routes(app: FastAPI, resources: AppResources) -> None:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/baskets/stream")
-    async def stream_basket_prices() -> EventSourceResponse:
-        generator = stream_basket_events(
-            basket_cache=basket_cache,
-            spot_provider=spot_provider,
-            pricing_service=pricing_service,
-            stream_interval=stream_interval,
-        )
-        response = EventSourceResponse(generator)
-        # Disable default ping to avoid deprecated datetime.utcnow usage in dependency.
-        if hasattr(response, "ping_interval"):
-            response.ping_interval = 1_000  # type: ignore[attr-defined]
-        if hasattr(response, "_ping_task") and response._ping_task:  # type: ignore[attr-defined]
-            response._ping_task.cancel()  # pragma: no cover - defensive safety
-        return response
+    async def stream() -> StreamingResponse:
+        async def sse_gen():
+            async for event in stream_basket_events(
+                basket_cache=basket_cache,
+                spot_provider=spot_provider,
+                pricing_service=pricing_service,
+                stream_interval=stream_interval,
+            ):
+                event_name = event.get("event")
+                data = event.get("data") or ""
+                if event_name:
+                    yield f"event: {event_name}\n"
+                yield f"data: {data}\n\n"
+
+        headers = {
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+        return StreamingResponse(sse_gen(), media_type="text/event-stream", headers=headers)
 
 
 def create_app() -> FastAPI:
@@ -290,7 +295,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="Delta-One Custom Basket Pricing API",
-        version="0.2.0",
+        version="0.0.0",
         description="Compute indicative prices and exposures for bespoke baskets.",
     )
 

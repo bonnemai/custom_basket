@@ -1,0 +1,8 @@
+{
+        "resource": "/baskets",
+        "path": "/baskets",
+        "httpMethod": "GET",
+        "headers": {"accept": "application/json"},
+        "requestContext": {"http": {"path": "/baskets", "method": "GET"}},
+        "isBase64Encoded": false
+      }
