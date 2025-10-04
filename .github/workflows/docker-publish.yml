@@ -22,9 +22,18 @@ jobs:
       contents: read
       packages: write
       id-token: write
+    env:
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Validate AWS role secret
+        run: |
+          if [ -z "${AWS_ROLE_TO_ASSUME}" ]; then
+            echo "AWS_ROLE_TO_ASSUME secret is not set"
+            exit 1
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3
@@ -35,7 +44,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
           role-session-name: GitHubActionsECR
           aws-region: ${{ env.AWS_REGION }}
 
