@@ -9,7 +9,9 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: ghcr.io/bonnemai/custom-basket
+  AWS_REGION: eu-west-2
+  ECR_REGISTRY: 833715352507.dkr.ecr.eu-west-2.amazonaws.com
+  ECR_REPOSITORY: bonnemai/custom-basket
   IMAGE_TAG: latest
 
 jobs:
@@ -29,18 +31,22 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@60eaf7f2565ce88076d6bfcc2f4d6e57423e0892 # v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@e7d497f0f25be8d6422974685211e60687198387 # v2
 
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}
           tags: type=raw,value=${{ env.IMAGE_TAG }}
 
       - name: Build and push image
@@ -49,5 +55,5 @@ jobs:
           context: .
           file: Dockerfile
           push: true
-          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
           labels: ${{ steps.meta.outputs.labels }}
