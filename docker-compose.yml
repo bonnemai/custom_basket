@@ -1,0 +1,30 @@
+services:
+  # Lambda runtime (for testing Lambda locally)
+  lambda:
+    build: .
+    container_name: custom_basket
+    environment:
+      - EODHD_API_TOKEN=${EODHD_API_TOKEN}
+    ports:
+      - "9000:8080"
+    networks:
+      - custom_basket_network
+
+  # FastAPI dev server (for local UI development)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: custom_basket_api
+    environment:
+      - EODHD_API_TOKEN=${EODHD_API_TOKEN}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./app:/app/app
+    networks:
+      - custom_basket_network
+
+networks:
+  custom_basket_network:
+    driver: bridge

@@ -26,6 +26,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 include-package-data = true
+packages = ["app"]
 
 [tool.setuptools.package-data]
 "app" = ["templates/*.html"]
