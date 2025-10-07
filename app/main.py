@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -113,6 +114,56 @@ def to_state(entity: CachedBasket) -> BasketState:
         basket_id=entity.basket_id,
         created_at=entity.created_at,
         updated_at=entity.updated_at,
+    )
+
+
+def apply_random_spot_variation(state: BasketState) -> BasketState:
+    """Apply random variation to spot prices: spot * (1 + 0.1 * (dice - 0.5))"""
+    from decimal import Decimal
+
+    # Create a copy of the state with varied prices
+    varied_positions = []
+    basket_price = Decimal("0")
+
+    for position in state.positions:
+        dice = random.random()  # Random float between 0 and 1
+        variation_factor = Decimal(str(1 + 0.1 * (dice - 0.5)))
+
+        # Apply variation to the spot price
+        varied_price = position.price * variation_factor
+        varied_price_in_base = position.price_in_base * variation_factor
+        varied_contribution = position.weight * varied_price_in_base
+
+        # Update basket price
+        basket_price += varied_contribution
+
+        # Calculate varied position notional and quantity if applicable
+        varied_position_notional = None
+        varied_quantity = None
+        if position.position_notional is not None and position.normalized_weight is not None:
+            varied_position_notional = state.total_notional * position.normalized_weight if state.total_notional else None
+            if varied_position_notional and varied_price_in_base != 0:
+                varied_quantity = varied_position_notional / varied_price_in_base
+
+        # Create varied position
+        varied_positions.append(
+            position.model_copy(
+                update={
+                    "price": varied_price,
+                    "price_in_base": varied_price_in_base,
+                    "contribution": varied_contribution,
+                    "position_notional": varied_position_notional,
+                    "quantity": varied_quantity,
+                }
+            )
+        )
+
+    # Return updated state with varied prices
+    return state.model_copy(
+        update={
+            "basket_price": basket_price,
+            "positions": varied_positions,
+        }
     )
 
 
@@ -239,7 +290,7 @@ def register_routes(app: FastAPI, resources: AppResources) -> None:
 
     @app.get("/baskets", response_model=list[BasketState])
     def list_baskets() -> list[BasketState]:
-        return [to_state(item) for item in basket_cache.list()]
+        return [apply_random_spot_variation(to_state(item)) for item in basket_cache.list()]
 
     @app.post("/pricing/basket", response_model=BasketPricingResponse)
     def post_basket_price(request: BasketRequest) -> BasketPricingResponse:
