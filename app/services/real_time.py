@@ -36,7 +36,7 @@ class EODHDDelayedClient:
     def _normalize_symbols(tickers: Iterable[str]) -> list[str]:
         symbols: set[str] = set()
         for ticker in tickers:
-            if not ticker:
+            if not ticker or not ticker.strip():
                 continue
             normalized = ticker.upper()
             if "." not in normalized:
