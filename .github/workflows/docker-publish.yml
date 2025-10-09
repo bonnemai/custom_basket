@@ -60,6 +60,7 @@ jobs:
           tags: type=raw,value=${{ env.IMAGE_TAG }}
 
       - name: Build and push image
+        id: build-image
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
@@ -70,3 +71,24 @@ jobs:
           outputs: type=image,name=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }},push=true,oci-mediatypes=false
           tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Update Lambda function
+        run: |
+          aws lambda update-function-code \
+            --function-name custom-basket \
+            --image-uri ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Wait for Lambda function update
+        run: |
+          aws lambda wait function-updated \
+            --function-name custom-basket \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Verify Lambda deployment
+        run: |
+          aws lambda get-function \
+            --function-name custom-basket \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Configuration.LastUpdateStatus' \
+            --output text
